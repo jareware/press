@@ -1,9 +1,21 @@
 package press;
 
+import java.io.File;
 import java.lang.reflect.Method;
+import java.text.Collator;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+import org.apache.commons.io.FileUtils;
+
+import play.Play;
 import play.PlayPlugin;
 
 public class Plugin extends PlayPlugin {
@@ -91,11 +103,119 @@ public class Plugin extends PlayPlugin {
     }
 
     /**
+     * Resolves a potentially globbed filename to a list of filenames:
+     *
+     * @example getResolvedFiles("my-app/*.js"); // => { "my-app/a.js", "my-app/b.js" }
+     *
+     * Non-globbed paths are returned as-is:
+     *
+     * @example getResolvedFiles("my-app/foo.css"); // => { "my-app/foo.css" }
+     *
+     * Note that patterns with partial filenames ("foo*.js") aren't supported.
+     * Filenames ending in "**.js" are treated recursively.
+     *
+     * The fileName is expected to be in the same form as with addJS() (that is,
+     * excluding the press.js.sourceDir part etc).  The same goes for the
+     * returned paths.
+     *
+     * @param fileName  filename as given in template
+     * @param sourceDir filename prefix as given in configuration
+     * @return
+     */
+    @SuppressWarnings("unchecked")
+    private static List<String> getResolvedFiles(String fileName, String sourceDir) {
+
+        List<String> sources = new ArrayList<String>();
+
+        String regex = "(?:.*/)?(\\*\\*?)\\.(\\w+)";
+        Pattern p = Pattern.compile(regex);
+        Matcher m = p.matcher(fileName);
+
+        if (!m.matches()) {
+            sources.add(fileName);
+            return sources;
+        }
+
+        String extension = m.group(2);
+        boolean isRecursive = m.group(1).length() == 2;
+
+        fileName = fileName.substring(0, fileName.length() - extension.length() - (isRecursive ? 3 : 2));
+
+        String fullPath = Play.applicationPath.getAbsolutePath() + sourceDir;
+        String[] extensionFilter = { extension };
+        File startLookingFrom = new File(fullPath + fileName);
+        Collection<File> files = FileUtils.listFiles(startLookingFrom, extensionFilter, isRecursive);
+
+        for (File file : files) {
+            String relativePath = file.getAbsolutePath().substring(fullPath.length());
+            sources.add(relativePath);
+        }
+
+        Collections.sort(sources, Collator.getInstance(Locale.US)); // sort by US ASCII by default
+
+        return sources;
+    }
+
+    /**
+     * Returns file signature(s) for given JavaScript file(s) that should be
+     * included in the HTML without any changes.
+     */
+    public static String addUntouchedJS(String fileName) {
+        String baseURL = jsCompressor.get().srcDir;
+        String result = "";
+
+        for (String src : getResolvedFiles(fileName, baseURL)) {
+            press.Plugin.checkForJSDuplicates(src, true);
+            result += getScriptTag(baseURL + src);
+        }
+
+        return result;
+    }
+
+    /**
+     * Returns file signature(s) for given CSS file(s) that should be included
+     * in the HTML without any changes.
+     */
+    public static String addUntouchedCSS(String fileName) {
+        String baseURL = cssCompressor.get().srcDir;
+        String result = "";
+
+        for (String src : getResolvedFiles(fileName, baseURL)) {
+            press.Plugin.checkForCSSDuplicates(src, true);
+            result += getLinkTag(baseURL + src);
+        }
+
+        return result;
+    }
+
+    /**
+     * Returns a script tag which can be used to output untouched JavaScript
+     * tags within the HTML.
+     */
+    private static String getScriptTag(String src) {
+        return "<script src=\"" + src + "\" type=\"text/javascript\" language=\"javascript\" charset=\"utf-8\"></script>\n";
+    }
+
+    /**
+     * Returns a link tag which can be used to output untouched CSS tags within
+     * the HTML.
+     */
+    private static String getLinkTag(String src) {
+        return "<link href=\"" + src + "\" rel=\"stylesheet\" type=\"text/css\" charset=\"utf-8\">" + (press.PluginConfig.htmlCompatible ? "" : "</link>") + "\n";
+    }
+
+    /**
      * Adds the given file to the JS compressor, returning the file signature to
      * be output in HTML
      */
     public static String addJS(String fileName, boolean compress) {
-        return jsCompressor.get().add(fileName, compress);
+        JSCompressor compressor = jsCompressor.get();
+        String result = "";
+
+        for (String src : getResolvedFiles(fileName, compressor.srcDir))
+            result += compressor.add(src, compress);
+
+        return result;
     }
 
     /**
@@ -103,7 +223,13 @@ public class Plugin extends PlayPlugin {
      * to be output in HTML
      */
     public static String addCSS(String fileName, boolean compress) {
-        return cssCompressor.get().add(fileName, compress);
+        CSSCompressor compressor = cssCompressor.get();
+        String result = "";
+
+        for (String src : getResolvedFiles(fileName, compressor.srcDir))
+            result += compressor.add(src, compress);
+
+        return result;
     }
 
     /**

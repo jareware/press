@@ -14,6 +14,8 @@
  *  #{press.stylesheet src: "widget.css"}
  *  #{press.stylesheet src: "ui.css" compress:true}
  *  #{press.stylesheet src: "validation.css"}
+ *  #{press.stylesheet src: "path/*.css"} <!-- include all CSS from "path" -->
+ *  #{press.stylesheet src: "path/**.css"} <!-- recursively include all CSS from "path" -->
  *
  *  #{press.compressed-stylesheet}
  *
@@ -38,7 +40,5 @@
   ${ press.Plugin.addCSS(_src, _compress) }
 #{/if}
 #{else}
-  %{ press.Plugin.checkForCSSDuplicates(_src, _compress)
-}%  <link href="/public/stylesheets/${_src}" rel="stylesheet" type="text/css" charset="utf-8"#{if _media} media="${_media}"#{/if}>#{if !press.PluginConfig.htmlCompatible}</link>#{/if}
-
+  ${ press.Plugin.addUntouchedCSS(_src) }
 #{/else}
